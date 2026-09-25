@@ -215,7 +215,7 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
         // receiving OOS data, which is unlikely because we've not seen any recently from this host.
         // PyroWave frames are delivered with holes (see completeBlockWithLostPackets()), so an
         // unrecoverable block is not a lost frame there.
-        if (!queue->reportedLostFrame && !queue->receivedOosData &&
+        if (isReferenceFrameInvalidationEnabled() && !queue->reportedLostFrame && !queue->receivedOosData &&
                 !(NegotiatedVideoFormat & VIDEO_FORMAT_MASK_PYROWAVE)) {
             // NB: We use totalPackets - neededPackets instead of just bufferParityPackets here because we require
             // one extra parity shard for recovery if we're in FEC validation mode.
@@ -747,11 +747,13 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                     // Notify the host of the loss of this frame
                     if (!queue->reportedLostFrame) {
                         notifyFrameLost(queue->currentFrameNumber, false);
-                        queue->reportedLostFrame = true;
                     }
 
+                    // NB: We reset reportedLostFrame here because we don't want to suppress
+                    // the reporting of the _next_ frame if it's lost.
                     queue->currentFrameNumber++;
                     queue->multiFecCurrentBlockNumber = 0;
+                    queue->reportedLostFrame = false;
                     return RTPF_RET_REJECTED;
                 }
             }
@@ -782,13 +784,16 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 
             // Notify the host of the loss of this frame
             if (!queue->reportedLostFrame) {
-                notifyFrameLost(queue->currentFrameNumber, false);
-                queue->reportedLostFrame = true;
+                notifyFrameLost(nvPacket->frameIndex, false);
             }
 
             // We dropped a block of this frame, so we must skip to the next one.
+            //
+            // NB: We reset reportedLostFrame here because we don't want to suppress
+            // the reporting of the _next_ frame if it's lost.
             queue->currentFrameNumber = nvPacket->frameIndex + 1;
             queue->multiFecCurrentBlockNumber = 0;
+            queue->reportedLostFrame = false;
             return RTPF_RET_REJECTED;
         }
 
